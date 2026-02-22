@@ -31,6 +31,16 @@ A web-based remote control for [G-Helper](https://github.com/seerge/g-helper) (o
 - **Control**: Modify `config.json` -> kill G-Helper -> atomic file replace -> restart G-Helper
 - **Real-time**: SignalR WebSocket pushes sensor data every ~1 second
 
+## Download
+
+**[Download GHelperRemote-win-x64.zip](https://github.com/n1tr0maverick/GHelperRemote/releases/latest/download/GHelperRemote-win-x64.zip)** (self-contained, no .NET install required)
+
+1. Download and extract the zip
+2. Right-click `GHelperRemote.Web.exe` -> **Run as Administrator**
+3. Open `http://localhost:5123` on the laptop, or `http://<laptop-ip>:5123` from your phone
+
+To install as an auto-start background service, run `scripts/install-service.ps1` as Administrator (see below).
+
 ## Prerequisites
 
 - Windows 10/11 with ASUS system drivers
