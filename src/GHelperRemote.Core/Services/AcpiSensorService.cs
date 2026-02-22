@@ -49,8 +49,8 @@ public sealed class AcpiSensorService : IDisposable
         {
             CpuTemperature = ReadSensorSafe(device, AcpiConstants.CpuTemperature, "CPU temperature"),
             GpuTemperature = ReadSensorSafe(device, AcpiConstants.GpuTemperature, "GPU temperature"),
-            CpuFanRpm = ReadSensorSafe(device, AcpiConstants.CpuFanSpeed, "CPU fan speed"),
-            GpuFanRpm = ReadSensorSafe(device, AcpiConstants.GpuFanSpeed, "GPU fan speed"),
+            CpuFanRpm = ReadSensorSafe(device, AcpiConstants.CpuFanSpeed, "CPU fan speed") * 100,
+            GpuFanRpm = ReadSensorSafe(device, AcpiConstants.GpuFanSpeed, "GPU fan speed") * 100,
             Timestamp = DateTime.UtcNow
         };
 
@@ -95,7 +95,7 @@ public sealed class AcpiSensorService : IDisposable
     {
         try
         {
-            return (int)device.QueryDsts(deviceId);
+            return device.QueryDsts(deviceId);
         }
         catch (Exception ex)
         {

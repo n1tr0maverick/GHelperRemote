@@ -7,15 +7,23 @@ public static class AcpiConstants
 
     // IOCTL codes
     public const uint IoctlDsts = 0x53545344; // DSTS - query device status (read-only)
+    public const uint IoctlDevs = 0x53564544; // DEVS - set device value (write)
 
     // IOCTL control code for ATKACPI
     public const uint AtkmAcpiIoctl = 0x0022240C;
+
+    // DSTS return value offset (driver adds 0x10000 as success flag)
+    public const int DstsReturnOffset = 65536;
 
     // Sensor device IDs for DSTS queries
     public const uint CpuTemperature = 0x00120094;
     public const uint GpuTemperature = 0x00120097;
     public const uint CpuFanSpeed = 0x00110013;
     public const uint GpuFanSpeed = 0x00110014;
+
+    // DEVS device IDs for fan curve writes
+    public const uint DevsCpuFanCurve = 0x00110024;
+    public const uint DevsGpuFanCurve = 0x00110025;
 
     // Performance mode values
     public const uint PerformanceBalanced = 0;
@@ -34,4 +42,5 @@ public static class AcpiConstants
     public const int OpenExisting = 3;
     public const uint GenericRead = 0x80000000;
     public const uint GenericWrite = 0x40000000;
+    public const uint FileAttributeNormal = 0x00000080;
 }
