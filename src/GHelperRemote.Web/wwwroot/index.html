@@ -102,6 +102,34 @@
             </div>
         </section>
 
+        <!-- G-Helper Executable -->
+        <section class="card" id="ghelperCard">
+            <div class="card-header" data-collapse="ghelperBody">
+                <h2 class="card-title">G-Helper Executable</h2>
+                <span class="collapse-icon"></span>
+            </div>
+            <div class="card-body" id="ghelperBody">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">GHelper.exe Path</span>
+                        <span class="setting-desc">Required to apply performance/GPU mode changes</span>
+                    </div>
+                    <div class="setting-control setting-control-fill">
+                        <input type="text" class="text-input" id="ghelperPathInput" placeholder="C:\\Path\\To\\GHelper.exe">
+                    </div>
+                </div>
+                <div class="setting-desc ghelper-path-status" id="ghelperPathStatus"></div>
+                <div class="setting-actions ghelper-actions">
+                    <button class="action-btn" id="ghelperPathSaveBtn">Save Path</button>
+                    <button class="action-btn secondary" id="ghelperPathAutoBtn">Auto Find</button>
+                </div>
+                <div class="loading-overlay hidden" id="ghelperLoading">
+                    <div class="spinner"></div>
+                    <span>Checking...</span>
+                </div>
+            </div>
+        </section>
+
         <!-- Fan Curves -->
         <section class="card" id="fanCurveCard">
             <div class="card-header" data-collapse="fanCurveBody">

@@ -76,6 +76,14 @@ public class GpuModeController : ControllerBase
                     : (string?)null
             });
         }
+        catch (FileNotFoundException)
+        {
+            return StatusCode(500, new
+            {
+                code = "ghelper_exe_not_found",
+                error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+            });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to set GPU mode");

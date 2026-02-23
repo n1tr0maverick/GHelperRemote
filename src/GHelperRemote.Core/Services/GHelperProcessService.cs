@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace GHelperRemote.Core.Services;
@@ -11,15 +12,87 @@ public sealed class GHelperProcessService
 {
     private readonly ILogger<GHelperProcessService> _logger;
     private readonly SemaphoreSlim _restartLock = new(1, 1);
+    private readonly object _pathLock = new();
     private string? _cachedExecutablePath;
+    private string? _configuredExecutablePath;
 
     private const string ProcessName = "GHelper";
     private static readonly TimeSpan KillWaitDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan StartWaitDelay = TimeSpan.FromSeconds(2);
 
-    public GHelperProcessService(ILogger<GHelperProcessService> logger)
+    public GHelperProcessService(ILogger<GHelperProcessService> logger, IConfiguration configuration)
     {
         _logger = logger;
+
+        var configuredPath = configuration["GHelper:ExecutablePath"];
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            _configuredExecutablePath = Environment.ExpandEnvironmentVariables(configuredPath);
+            _logger.LogInformation("Configured G-Helper executable path: {Path}", _configuredExecutablePath);
+        }
+    }
+
+    public string? GetConfiguredExecutablePath()
+    {
+        lock (_pathLock)
+        {
+            return _configuredExecutablePath;
+        }
+    }
+
+    public bool SetConfiguredExecutablePath(string path, out string? error)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            error = "Path is required.";
+            return false;
+        }
+
+        var expandedPath = Environment.ExpandEnvironmentVariables(path.Trim());
+        var fullPath = Path.GetFullPath(expandedPath);
+
+        if (!File.Exists(fullPath))
+        {
+            error = "G-Helper executable path does not exist.";
+            return false;
+        }
+
+        if (!string.Equals(Path.GetFileName(fullPath), "GHelper.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "Path must point to GHelper.exe.";
+            return false;
+        }
+
+        lock (_pathLock)
+        {
+            _configuredExecutablePath = fullPath;
+            _cachedExecutablePath = fullPath;
+        }
+
+        _logger.LogInformation("Updated G-Helper executable path to: {Path}", fullPath);
+        error = null;
+        return true;
+    }
+
+    public string? GetResolvedExecutablePath()
+    {
+        return FindExecutablePath(logWarnings: false, updateConfiguredPath: false);
+    }
+
+    public bool TryAutoDetectExecutablePath(out string? path)
+    {
+        path = FindExecutablePath(logWarnings: false, updateConfiguredPath: true);
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        lock (_pathLock)
+        {
+            _configuredExecutablePath = path;
+            _cachedExecutablePath = path;
+        }
+
+        _logger.LogInformation("Auto-detected G-Helper executable path: {Path}", path);
+        return true;
     }
 
     /// <summary>
@@ -61,7 +134,7 @@ public sealed class GHelperProcessService
             _logger.LogInformation("Restarting G-Helper");
 
             // Find the executable path before killing the process
-            var executablePath = FindExecutablePath();
+            var executablePath = FindExecutablePath(logWarnings: true, updateConfiguredPath: true);
             if (string.IsNullOrEmpty(executablePath))
             {
                 _logger.LogError("Cannot restart G-Helper: executable path not found");
@@ -118,8 +191,28 @@ public sealed class GHelperProcessService
     /// First checks running processes, then falls back to common installation paths.
     /// Caches the result once found.
     /// </summary>
-    private string? FindExecutablePath()
+    private string? FindExecutablePath(bool logWarnings, bool updateConfiguredPath)
     {
+        string? configuredPath;
+        lock (_pathLock)
+        {
+            configuredPath = _configuredExecutablePath;
+        }
+
+        // Prefer explicit configuration
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            if (File.Exists(configuredPath))
+                return configuredPath;
+
+            if (logWarnings)
+            {
+                _logger.LogWarning(
+                    "Configured G-Helper executable path does not exist: {Path}",
+                    configuredPath);
+            }
+        }
+
         // Return cached path if still valid
         if (!string.IsNullOrEmpty(_cachedExecutablePath) && File.Exists(_cachedExecutablePath))
             return _cachedExecutablePath;
@@ -129,6 +222,14 @@ public sealed class GHelperProcessService
         if (path is not null)
         {
             _cachedExecutablePath = path;
+            if (updateConfiguredPath)
+            {
+                lock (_pathLock)
+                {
+                    _configuredExecutablePath = path;
+                }
+            }
+
             return path;
         }
 
@@ -136,11 +237,21 @@ public sealed class GHelperProcessService
         var commonPaths = new[]
         {
             Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads",
+                "GHelper",
+                "GHelper.exe"),
+            Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "GHelper",
                 "GHelper.exe"),
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "GHelper",
+                "GHelper.exe"),
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
                 "GHelper",
                 "GHelper.exe")
         };
@@ -151,11 +262,22 @@ public sealed class GHelperProcessService
             {
                 _logger.LogInformation("Found G-Helper at common path: {Path}", candidate);
                 _cachedExecutablePath = candidate;
+
+                if (updateConfiguredPath)
+                {
+                    lock (_pathLock)
+                    {
+                        _configuredExecutablePath = candidate;
+                    }
+                }
+
                 return candidate;
             }
         }
 
-        _logger.LogWarning("G-Helper executable not found in running processes or common paths");
+        if (logWarnings)
+            _logger.LogWarning("G-Helper executable not found in running processes or common paths");
+
         return null;
     }
 

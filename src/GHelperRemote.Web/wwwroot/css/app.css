@@ -531,6 +531,10 @@ body {
     flex-shrink: 0;
 }
 
+.setting-control-fill {
+    flex: 1;
+}
+
 .slider-control {
     flex-direction: column;
     align-items: flex-end;
@@ -539,6 +543,16 @@ body {
 
 .setting-actions {
     padding-top: 16px;
+}
+
+.ghelper-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ghelper-path-status {
+    margin-top: 10px;
 }
 
 /* --- Number Input --- */
@@ -562,6 +576,23 @@ body {
 }
 
 .number-input:focus {
+    border-color: var(--accent);
+}
+
+.text-input {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color var(--transition);
+}
+
+.text-input:focus {
     border-color: var(--accent);
 }
 

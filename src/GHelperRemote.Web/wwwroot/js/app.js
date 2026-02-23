@@ -46,7 +46,10 @@
     function $$(sel, ctx) { return Array.from((ctx || document).querySelectorAll(sel)); }
 
     /** API fetch wrapper with toast on error */
-    async function api(method, url, body) {
+    async function api(method, url, body, options) {
+        options = options || {};
+        const showErrorToast = options.showErrorToast !== false;
+
         const opts = {
             method,
             headers: { 'Content-Type': 'application/json' },
@@ -57,8 +60,33 @@
         try {
             const res = await fetch(`${API_BASE}${url}`, opts);
             if (!res.ok) {
-                const text = await res.text().catch(() => '');
-                throw new Error(text || `HTTP ${res.status}`);
+                const ct = res.headers.get('content-type') || '';
+                var message = `HTTP ${res.status}`;
+                var code = null;
+
+                if (ct.includes('application/json')) {
+                    const payload = await res.json().catch(() => null);
+                    if (payload) {
+                        if (payload.error) message = payload.error;
+                        if (payload.code) code = payload.code;
+                    }
+                } else {
+                    const text = await res.text().catch(() => '');
+                    if (text) {
+                        try {
+                            const payload = JSON.parse(text);
+                            message = payload.error || text;
+                            code = payload.code || null;
+                        } catch (_) {
+                            message = text;
+                        }
+                    }
+                }
+
+                var error = new Error(message);
+                error.code = code;
+                error.status = res.status;
+                throw error;
             }
             const ct = res.headers.get('content-type') || '';
             if (ct.includes('application/json')) {
@@ -66,7 +94,9 @@
             }
             return null;
         } catch (err) {
-            showToast(err.message || 'Request failed', 'error');
+            if (showErrorToast) {
+                showToast(err.message || 'Request failed', 'error');
+            }
             throw err;
         }
     }
@@ -217,6 +247,13 @@
         });
     }
 
+    function expandCard(bodyId) {
+        const body = $('#' + bodyId);
+        const header = $('.card-header[data-collapse="' + bodyId + '"]');
+        if (body) body.classList.remove('collapsed');
+        if (header) header.classList.remove('collapsed');
+    }
+
     // ── Performance Mode ──────────────────────────────────────
 
     async function loadPerfMode() {
@@ -241,10 +278,12 @@
                 setBtnsDisabled('#perfModeButtons', true);
                 showLoading('perfLoading');
                 try {
-                    await api('PUT', '/mode', { mode: mode });
+                    await api('PUT', '/mode', { mode: mode }, { showErrorToast: false });
                     setPerfModeUI(mode);
                     showToast('Performance mode changed', 'success');
-                } catch (_) { /* toast shown */ }
+                } catch (err) {
+                    showModeChangeError(err);
+                }
                 hideLoading('perfLoading');
                 setBtnsDisabled('#perfModeButtons', false);
             });
@@ -281,13 +320,107 @@
                 setBtnsDisabled('#gpuModeButtons', true);
                 showLoading('gpuLoading');
                 try {
-                    await api('PUT', '/gpu', { mode: mode });
+                    await api('PUT', '/gpu', { mode: mode }, { showErrorToast: false });
                     setGpuModeUI(mode);
                     showToast('GPU mode changed', 'success');
-                } catch (_) { /* toast shown */ }
+                } catch (err) {
+                    showModeChangeError(err);
+                }
                 hideLoading('gpuLoading');
                 setBtnsDisabled('#gpuModeButtons', false);
             });
+        });
+    }
+
+    function showModeChangeError(err) {
+        if (err && err.code === 'ghelper_exe_not_found') {
+            expandCard('ghelperBody');
+            var input = $('#ghelperPathInput');
+            if (input) input.focus();
+            showToast('Set your GHelper.exe path in G-Helper Executable, or tap Auto Find.', 'error');
+            return;
+        }
+
+        showToast((err && err.message) || 'Failed to apply mode', 'error');
+    }
+
+    // ── G-Helper Executable Path ─────────────────────────────
+
+    function setGHelperPathUI(data) {
+        if (!data) return;
+
+        var input = $('#ghelperPathInput');
+        var status = $('#ghelperPathStatus');
+        if (!input || !status) return;
+
+        input.value = data.configuredPath || data.resolvedPath || '';
+
+        if (data.isResolved) {
+            status.textContent = 'Resolved: ' + data.resolvedPath;
+            status.style.color = 'var(--green)';
+        } else {
+            status.textContent = 'Path not resolved. Save the full GHelper.exe path or use Auto Find.';
+            status.style.color = 'var(--yellow)';
+        }
+    }
+
+    async function loadGHelperPath() {
+        try {
+            var data = await api('GET', '/ghelper/executable');
+            setGHelperPathUI(data);
+        } catch (_) { /* toast shown */ }
+    }
+
+    function initGHelperPath() {
+        var saveBtn = $('#ghelperPathSaveBtn');
+        var autoBtn = $('#ghelperPathAutoBtn');
+        var input = $('#ghelperPathInput');
+
+        if (!saveBtn || !autoBtn || !input) return;
+
+        saveBtn.addEventListener('click', async function () {
+            var path = input.value.trim();
+            if (!path) {
+                showToast('Enter the full path to GHelper.exe', 'error');
+                input.focus();
+                return;
+            }
+
+            showLoading('ghelperLoading');
+            saveBtn.disabled = true;
+            autoBtn.disabled = true;
+            try {
+                var data = await api('PUT', '/ghelper/executable', { path: path });
+                setGHelperPathUI(data);
+                if (data && data.persisted === false) {
+                    showToast((data.warning || 'Path applied, but could not persist to appsettings.json.'), 'info');
+                } else {
+                    showToast('G-Helper executable path saved', 'success');
+                }
+            } catch (_) { /* toast shown */ }
+            hideLoading('ghelperLoading');
+            saveBtn.disabled = false;
+            autoBtn.disabled = false;
+        });
+
+        autoBtn.addEventListener('click', async function () {
+            showLoading('ghelperLoading');
+            saveBtn.disabled = true;
+            autoBtn.disabled = true;
+            try {
+                var data = await api('POST', '/ghelper/executable/auto-detect', undefined, { showErrorToast: false });
+                setGHelperPathUI(data);
+                if (data && data.persisted === false) {
+                    showToast((data.warning || 'Path auto-detected, but could not persist to appsettings.json.'), 'info');
+                } else {
+                    showToast('Auto-detected GHelper.exe path', 'success');
+                }
+            } catch (err) {
+                showToast((err && err.message) || 'Could not auto-detect GHelper.exe', 'error');
+            }
+            hideLoading('ghelperLoading');
+            saveBtn.disabled = false;
+            autoBtn.disabled = false;
         });
     }
 
@@ -761,6 +894,7 @@
         initCollapsible();
         initPerfMode();
         initGpuMode();
+        initGHelperPath();
         initFanCurve();
         initDisplay();
         initKeyboard();
@@ -772,6 +906,7 @@
         // Load all sections independently
         loadPerfMode();
         loadGpuMode();
+        loadGHelperPath();
         loadFanCurves();
         loadDisplay();
         loadKeyboard();

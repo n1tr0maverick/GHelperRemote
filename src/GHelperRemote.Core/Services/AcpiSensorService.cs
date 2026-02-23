@@ -12,8 +12,14 @@ public sealed class AcpiSensorService : IDisposable
 {
     private readonly ILogger<AcpiSensorService> _logger;
     private readonly object _deviceLock = new();
+    private readonly object _sensorStateLock = new();
     private AcpiDevice? _device;
     private bool _disposed;
+    private readonly Dictionary<uint, DateTime> _sensorNextRetryUtc = new();
+    private readonly Dictionary<uint, DateTime> _sensorLastWarningUtc = new();
+
+    private static readonly TimeSpan SensorRetryBackoff = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan WarningThrottleInterval = TimeSpan.FromMinutes(2);
 
     private static readonly Dictionary<int, string> PerformanceModeNames = new()
     {
@@ -93,13 +99,56 @@ public sealed class AcpiSensorService : IDisposable
 
     private int ReadSensorSafe(AcpiDevice device, uint deviceId, string sensorName)
     {
+        var now = DateTime.UtcNow;
+
+        lock (_sensorStateLock)
+        {
+            if (_sensorNextRetryUtc.TryGetValue(deviceId, out var nextRetry) && now < nextRetry)
+                return 0;
+        }
+
         try
         {
-            return device.QueryDsts(deviceId);
+            var value = device.QueryDsts(deviceId);
+
+            lock (_sensorStateLock)
+            {
+                _sensorNextRetryUtc.Remove(deviceId);
+            }
+
+            return value;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read {SensorName} (device ID 0x{DeviceId:X8})", sensorName, deviceId);
+            var shouldLogWarning = false;
+
+            lock (_sensorStateLock)
+            {
+                _sensorNextRetryUtc[deviceId] = now + SensorRetryBackoff;
+
+                if (!_sensorLastWarningUtc.TryGetValue(deviceId, out var lastWarning) ||
+                    now - lastWarning >= WarningThrottleInterval)
+                {
+                    _sensorLastWarningUtc[deviceId] = now;
+                    shouldLogWarning = true;
+                }
+            }
+
+            if (shouldLogWarning)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to read {SensorName} (device ID 0x{DeviceId:X8}). Retrying periodically.",
+                    sensorName,
+                    deviceId);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Skipping repeated {SensorName} read warning for device ID 0x{DeviceId:X8}",
+                    sensorName,
+                    deviceId);
+            }
+
             return 0;
         }
     }
