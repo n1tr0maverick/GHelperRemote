@@ -63,20 +63,31 @@ public class PerformanceModeController : ControllerBase
                 ["performance_mode"] = request.Mode
             });
 
-            await _processService.RestartGHelperAsync();
+            string? restartWarning = null;
+            try
+            {
+                await _processService.RestartGHelperAsync();
+            }
+            catch (FileNotFoundException)
+            {
+                return StatusCode(500, new
+                {
+                    code = "ghelper_exe_not_found",
+                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                });
+            }
+            catch (Exception restartEx)
+            {
+                _logger.LogWarning(restartEx, "Config was saved but G-Helper restart failed");
+                restartWarning = "Config saved, but G-Helper could not be restarted. " +
+                                 "Please restart G-Helper manually for changes to take effect.";
+            }
 
             return Ok(new
             {
                 mode = request.Mode,
-                name = ModeNames[request.Mode]
-            });
-        }
-        catch (FileNotFoundException)
-        {
-            return StatusCode(500, new
-            {
-                code = "ghelper_exe_not_found",
-                error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                name = ModeNames[request.Mode],
+                warning = restartWarning
             });
         }
         catch (Exception ex)

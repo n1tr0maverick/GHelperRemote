@@ -278,9 +278,13 @@
                 setBtnsDisabled('#perfModeButtons', true);
                 showLoading('perfLoading');
                 try {
-                    await api('PUT', '/mode', { mode: mode }, { showErrorToast: false });
+                    var result = await api('PUT', '/mode', { mode: mode }, { showErrorToast: false });
                     setPerfModeUI(mode);
-                    showToast('Performance mode changed', 'success');
+                    if (result && result.warning) {
+                        showToast(result.warning, 'info');
+                    } else {
+                        showToast('Performance mode changed', 'success');
+                    }
                 } catch (err) {
                     showModeChangeError(err);
                 }
@@ -320,9 +324,13 @@
                 setBtnsDisabled('#gpuModeButtons', true);
                 showLoading('gpuLoading');
                 try {
-                    await api('PUT', '/gpu', { mode: mode }, { showErrorToast: false });
+                    var result = await api('PUT', '/gpu', { mode: mode }, { showErrorToast: false });
                     setGpuModeUI(mode);
-                    showToast('GPU mode changed', 'success');
+                    if (result && result.warning) {
+                        showToast(result.warning, 'info');
+                    } else {
+                        showToast('GPU mode changed', 'success');
+                    }
                 } catch (err) {
                     showModeChangeError(err);
                 }

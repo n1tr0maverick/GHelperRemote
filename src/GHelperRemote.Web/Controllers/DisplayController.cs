@@ -69,7 +69,22 @@ public class DisplayController : ControllerBase
                 ["overdrive"] = settings.Overdrive
             });
 
-            await _processService.RestartGHelperAsync();
+            try
+            {
+                await _processService.RestartGHelperAsync();
+            }
+            catch (FileNotFoundException)
+            {
+                return StatusCode(500, new
+                {
+                    code = "ghelper_exe_not_found",
+                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                });
+            }
+            catch (Exception restartEx)
+            {
+                _logger.LogWarning(restartEx, "Display settings saved but G-Helper restart failed");
+            }
 
             return Ok(new
             {

@@ -55,7 +55,22 @@ public class BatteryController : ControllerBase
                 ["charge_limit"] = request.ChargeLimit
             });
 
-            await _processService.RestartGHelperAsync();
+            try
+            {
+                await _processService.RestartGHelperAsync();
+            }
+            catch (FileNotFoundException)
+            {
+                return StatusCode(500, new
+                {
+                    code = "ghelper_exe_not_found",
+                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                });
+            }
+            catch (Exception restartEx)
+            {
+                _logger.LogWarning(restartEx, "Charge limit saved but G-Helper restart failed");
+            }
 
             var config = await _configService.ReadConfigAsync();
             var status = ReadBatteryFromWmi(config);

@@ -78,9 +78,27 @@ public class FanCurveController : ControllerBase
                 [$"fan_profile_gpu_{modeId}"] = request.Gpu.ToHexString()
             });
 
-            await _processService.RestartGHelperAsync();
+            string? restartWarning = null;
+            try
+            {
+                await _processService.RestartGHelperAsync();
+            }
+            catch (FileNotFoundException)
+            {
+                return StatusCode(500, new
+                {
+                    code = "ghelper_exe_not_found",
+                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                });
+            }
+            catch (Exception restartEx)
+            {
+                _logger.LogWarning(restartEx, "Fan curve saved but G-Helper restart failed");
+                restartWarning = "Fan curve saved, but G-Helper could not be restarted. " +
+                                 "Please restart G-Helper manually for changes to take effect.";
+            }
 
-            return Ok(new { cpu = request.Cpu, gpu = request.Gpu });
+            return Ok(new { cpu = request.Cpu, gpu = request.Gpu, warning = restartWarning });
         }
         catch (Exception ex)
         {

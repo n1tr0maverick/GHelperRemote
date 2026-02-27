@@ -64,24 +64,45 @@ public class GpuModeController : ControllerBase
                 ["gpu_auto"] = request.Auto
             });
 
-            await _processService.RestartGHelperAsync();
+            string? restartWarning = null;
+            try
+            {
+                await _processService.RestartGHelperAsync();
+            }
+            catch (FileNotFoundException)
+            {
+                return StatusCode(500, new
+                {
+                    code = "ghelper_exe_not_found",
+                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                });
+            }
+            catch (Exception restartEx)
+            {
+                _logger.LogWarning(restartEx, "Config was saved but G-Helper restart failed");
+                restartWarning = "Config saved, but G-Helper could not be restarted. " +
+                                 "Please restart G-Helper manually for changes to take effect.";
+            }
+
+            var muxWarning = request.Mode == 2
+                ? "Ultimate (MUX switch) mode requires a system reboot to take effect."
+                : (string?)null;
+
+            // Combine warnings if both exist
+            var warning = (restartWarning, muxWarning) switch
+            {
+                (not null, not null) => restartWarning + " " + muxWarning,
+                (not null, null) => restartWarning,
+                (null, not null) => muxWarning,
+                _ => null
+            };
 
             return Ok(new
             {
                 mode = request.Mode,
                 name = ModeNames[request.Mode],
                 auto = request.Auto,
-                warning = request.Mode == 2
-                    ? "Ultimate (MUX switch) mode requires a system reboot to take effect."
-                    : (string?)null
-            });
-        }
-        catch (FileNotFoundException)
-        {
-            return StatusCode(500, new
-            {
-                code = "ghelper_exe_not_found",
-                error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                warning
             });
         }
         catch (Exception ex)
