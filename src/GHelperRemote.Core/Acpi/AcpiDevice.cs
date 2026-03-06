@@ -6,8 +6,8 @@ namespace GHelperRemote.Core.Acpi;
 
 /// <summary>
 /// Managed wrapper around the ASUS ATKACPI device driver.
-/// Provides thread-safe access to DSTS (device status) queries for reading
-/// sensor data such as CPU/GPU temperatures and fan speeds.
+/// Matches GHelper's AsusACPI.cs CallMethod pattern for full compatibility.
+/// Provides thread-safe access to DSTS (read) and DEVS (write) operations.
 /// </summary>
 public sealed class AcpiDevice : IDisposable
 {
@@ -15,11 +15,6 @@ public sealed class AcpiDevice : IDisposable
     private readonly object _ioLock = new();
     private bool _disposed;
 
-    /// <summary>
-    /// Opens a handle to the ATKACPI device driver.
-    /// Uses READ|WRITE share mode to allow concurrent access with G-Helper.
-    /// </summary>
-    /// <exception cref="Win32Exception">Thrown when the device handle cannot be opened.</exception>
     public AcpiDevice()
     {
         _handle = AcpiNativeMethods.CreateFileW(
@@ -40,93 +35,84 @@ public sealed class AcpiDevice : IDisposable
     }
 
     /// <summary>
-    /// Queries the ATKACPI device status (DSTS) for the specified sensor device ID.
-    /// G-Helper's actual buffer format is 16 bytes:
-    ///   [0..3]  Method ID (DSTS = 0x53545344)
-    ///   [4..7]  Args length = 8
-    ///   [8..11] Device ID
-    ///   [12..15] Padding = 0
-    /// The return value has 65536 (0x10000) added as a success flag by the driver.
+    /// Core ACPI call method matching GHelper's AsusACPI.CallMethod.
+    /// Input buffer: [MethodID(4)][ArgsLength(4)][Args(N)]
+    /// Output buffer: 16 bytes, result in first 4 bytes.
+    /// </summary>
+    private int CallMethod(uint methodId, byte[] args)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var inBuffer = new byte[8 + args.Length];
+        BitConverter.TryWriteBytes(inBuffer.AsSpan(0, 4), methodId);
+        BitConverter.TryWriteBytes(inBuffer.AsSpan(4, 4), (uint)args.Length);
+        args.CopyTo(inBuffer, 8);
+
+        var outBuffer = new byte[16];
+
+        lock (_ioLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            bool success = AcpiNativeMethods.DeviceIoControl(
+                _handle.DangerousGetHandle(),
+                AcpiConstants.AtkmAcpiIoctl,
+                inBuffer,
+                (uint)inBuffer.Length,
+                outBuffer,
+                (uint)outBuffer.Length,
+                out _,
+                IntPtr.Zero);
+
+            if (!success)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    $"DeviceIoControl failed for method 0x{methodId:X8}.");
+            }
+        }
+
+        return BitConverter.ToInt32(outBuffer, 0);
+    }
+
+    /// <summary>
+    /// Queries DSTS (device status) for the specified device ID.
+    /// Subtracts the 0x10000 success flag from the result.
+    /// Matches GHelper's DeviceGet().
     /// </summary>
     public int QueryDsts(uint deviceId)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        // Build the input buffer: 16 bytes (matches G-Helper's AsusACPI.cs format)
-        var inBuffer = new byte[16];
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(0, 4), AcpiConstants.IoctlDsts);  // Method ID
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(4, 4), (uint)8);                   // Args length
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(8, 4), deviceId);                   // Device ID
-        // Bytes 12-15 remain 0 (padding)
-
-        var outBuffer = new byte[16];
-
-        lock (_ioLock)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-
-            bool success = AcpiNativeMethods.DeviceIoControl(
-                _handle.DangerousGetHandle(),
-                AcpiConstants.AtkmAcpiIoctl,
-                inBuffer,
-                (uint)inBuffer.Length,
-                outBuffer,
-                (uint)outBuffer.Length,
-                out _,
-                IntPtr.Zero);
-
-            if (!success)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(),
-                    $"DeviceIoControl failed for DSTS query with device ID 0x{deviceId:X8}.");
-            }
-        }
-
-        // Subtract 65536 (0x10000) - the driver adds this as a success flag
-        return BitConverter.ToInt32(outBuffer, 0) - AcpiConstants.DstsReturnOffset;
+        var args = new byte[8];
+        BitConverter.TryWriteBytes(args.AsSpan(0, 4), deviceId);
+        // Bytes 4-7 remain 0 (padding)
+        return CallMethod(AcpiConstants.IoctlDsts, args) - AcpiConstants.DstsReturnOffset;
     }
 
     /// <summary>
-    /// Sends a DEVS (set device value) command to the ATKACPI driver.
-    /// Used for writing hardware settings like fan curves.
+    /// Sends a DEVS (set device value) command with a single integer value.
+    /// Args: [DeviceID(4)][Value(4)] = 8 bytes.
+    /// Matches GHelper's DeviceSet(uint, int).
     /// </summary>
-    public void CallDevs(uint deviceId, uint value)
+    public int CallDevs(uint deviceId, int value)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        var inBuffer = new byte[16];
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(0, 4), AcpiConstants.IoctlDevs);  // Method ID
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(4, 4), (uint)8);                   // Args length
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(8, 4), deviceId);                   // Device ID
-        BitConverter.TryWriteBytes(inBuffer.AsSpan(12, 4), value);                     // Value to set
-
-        var outBuffer = new byte[16];
-
-        lock (_ioLock)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-
-            bool success = AcpiNativeMethods.DeviceIoControl(
-                _handle.DangerousGetHandle(),
-                AcpiConstants.AtkmAcpiIoctl,
-                inBuffer,
-                (uint)inBuffer.Length,
-                outBuffer,
-                (uint)outBuffer.Length,
-                out _,
-                IntPtr.Zero);
-
-            if (!success)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(),
-                    $"DeviceIoControl failed for DEVS call with device ID 0x{deviceId:X8}, value 0x{value:X8}.");
-            }
-        }
+        var args = new byte[8];
+        BitConverter.TryWriteBytes(args.AsSpan(0, 4), deviceId);
+        BitConverter.TryWriteBytes(args.AsSpan(4, 4), value);
+        return CallMethod(AcpiConstants.IoctlDevs, args);
     }
 
     /// <summary>
-    /// Releases the ATKACPI device handle.
+    /// Sends a DEVS command with arbitrary data (e.g. 16-byte fan curves).
+    /// Args: [DeviceID(4)][Data(N)] = 4+N bytes.
+    /// Matches GHelper's DeviceSet(uint, byte[]).
     /// </summary>
+    public int CallDevsWithData(uint deviceId, byte[] data)
+    {
+        var args = new byte[4 + data.Length];
+        BitConverter.TryWriteBytes(args.AsSpan(0, 4), deviceId);
+        data.CopyTo(args, 4);
+        return CallMethod(AcpiConstants.IoctlDevs, args);
+    }
+
     public void Dispose()
     {
         if (_disposed)

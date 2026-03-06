@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 using Microsoft.AspNetCore.Mvc;
 
 using GHelperRemote.Core.Models;
@@ -13,17 +11,17 @@ public class PerformanceModeController : ControllerBase
 {
     private static readonly string[] ModeNames = { "Balanced", "Turbo", "Silent" };
 
+    private readonly AcpiSensorService _acpiService;
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<PerformanceModeController> _logger;
 
     public PerformanceModeController(
+        AcpiSensorService acpiService,
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<PerformanceModeController> logger)
     {
+        _acpiService = acpiService;
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -58,36 +56,29 @@ public class PerformanceModeController : ControllerBase
 
         try
         {
-            await _configService.WriteConfigAsync(new Dictionary<string, object>
+            // Apply directly to hardware via ACPI DEVS call
+            if (!_acpiService.SetPerformanceMode(request.Mode))
             {
-                ["performance_mode"] = request.Mode
-            });
+                return StatusCode(500, new { error = "Failed to set performance mode via ACPI. Check logs for details." });
+            }
 
-            string? restartWarning = null;
+            // Persist to config for GHelper UI sync
             try
             {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
+                await _configService.WriteConfigAsync(new Dictionary<string, object>
                 {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                    ["performance_mode"] = request.Mode
                 });
             }
-            catch (Exception restartEx)
+            catch (Exception configEx)
             {
-                _logger.LogWarning(restartEx, "Config was saved but G-Helper restart failed");
-                restartWarning = "Config saved, but G-Helper could not be restarted. " +
-                                 "Please restart G-Helper manually for changes to take effect.";
+                _logger.LogWarning(configEx, "Mode applied to hardware but config write failed");
             }
 
             return Ok(new
             {
                 mode = request.Mode,
-                name = ModeNames[request.Mode],
-                warning = restartWarning
+                name = ModeNames[request.Mode]
             });
         }
         catch (Exception ex)

@@ -12,16 +12,13 @@ namespace GHelperRemote.Web.Controllers;
 public class KeyboardController : ControllerBase
 {
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<KeyboardController> _logger;
 
     public KeyboardController(
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<KeyboardController> logger)
     {
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -58,23 +55,6 @@ public class KeyboardController : ControllerBase
                 ["kbd_brightness"] = settings.Brightness,
                 ["kbd_mode"] = settings.Mode
             });
-
-            try
-            {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
-                {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
-                });
-            }
-            catch (Exception restartEx)
-            {
-                _logger.LogWarning(restartEx, "Keyboard settings saved but G-Helper restart failed");
-            }
 
             return Ok(new { brightness = settings.Brightness, mode = settings.Mode });
         }

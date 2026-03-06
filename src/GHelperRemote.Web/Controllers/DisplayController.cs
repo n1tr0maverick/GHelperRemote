@@ -12,16 +12,13 @@ namespace GHelperRemote.Web.Controllers;
 public class DisplayController : ControllerBase
 {
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<DisplayController> _logger;
 
     public DisplayController(
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<DisplayController> logger)
     {
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -68,23 +65,6 @@ public class DisplayController : ControllerBase
                 ["screen_auto"] = settings.ScreenAuto,
                 ["overdrive"] = settings.Overdrive
             });
-
-            try
-            {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
-                {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
-                });
-            }
-            catch (Exception restartEx)
-            {
-                _logger.LogWarning(restartEx, "Display settings saved but G-Helper restart failed");
-            }
 
             return Ok(new
             {

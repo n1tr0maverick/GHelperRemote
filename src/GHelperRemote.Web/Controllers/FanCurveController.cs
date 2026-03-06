@@ -2,6 +2,7 @@ using System.Text.Json;
 
 using Microsoft.AspNetCore.Mvc;
 
+using GHelperRemote.Core.Acpi;
 using GHelperRemote.Core.Models;
 using GHelperRemote.Core.Services;
 
@@ -11,17 +12,17 @@ namespace GHelperRemote.Web.Controllers;
 [Route("api/fans")]
 public class FanCurveController : ControllerBase
 {
+    private readonly AcpiSensorService _acpiService;
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<FanCurveController> _logger;
 
     public FanCurveController(
+        AcpiSensorService acpiService,
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<FanCurveController> logger)
     {
+        _acpiService = acpiService;
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -72,39 +73,57 @@ public class FanCurveController : ControllerBase
 
         try
         {
-            await _configService.WriteConfigAsync(new Dictionary<string, object>
-            {
-                [$"fan_profile_cpu_{modeId}"] = request.Cpu.ToHexString(),
-                [$"fan_profile_gpu_{modeId}"] = request.Gpu.ToHexString()
-            });
+            // Build 16-byte curve data: 8 temps + 8 speeds
+            var cpuCurveData = BuildCurveData(request.Cpu);
+            var gpuCurveData = BuildCurveData(request.Gpu);
 
-            string? restartWarning = null;
+            // Apply directly to hardware via ACPI
+            var cpuOk = _acpiService.ApplyFanCurve(AcpiConstants.DevsCpuFanCurve, cpuCurveData);
+            var gpuOk = _acpiService.ApplyFanCurve(AcpiConstants.DevsGpuFanCurve, gpuCurveData);
+
+            if (!cpuOk || !gpuOk)
+            {
+                var failed = (!cpuOk && !gpuOk) ? "CPU and GPU" : (!cpuOk ? "CPU" : "GPU");
+                _logger.LogWarning("Fan curve ACPI apply failed for: {Failed}", failed);
+            }
+
+            // Persist to config
+            string? warning = null;
             try
             {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
+                await _configService.WriteConfigAsync(new Dictionary<string, object>
                 {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                    [$"fan_profile_cpu_{modeId}"] = request.Cpu.ToHexString(),
+                    [$"fan_profile_gpu_{modeId}"] = request.Gpu.ToHexString()
                 });
             }
-            catch (Exception restartEx)
+            catch (Exception configEx)
             {
-                _logger.LogWarning(restartEx, "Fan curve saved but G-Helper restart failed");
-                restartWarning = "Fan curve saved, but G-Helper could not be restarted. " +
-                                 "Please restart G-Helper manually for changes to take effect.";
+                _logger.LogWarning(configEx, "Fan curves applied to hardware but config write failed");
+                warning = "Fan curves applied to hardware but failed to persist to config.";
             }
 
-            return Ok(new { cpu = request.Cpu, gpu = request.Gpu, warning = restartWarning });
+            if (!cpuOk || !gpuOk)
+            {
+                warning = "Fan curves saved to config but ACPI apply failed for some curves. " +
+                          "The curves may take effect after the next mode change.";
+            }
+
+            return Ok(new { cpu = request.Cpu, gpu = request.Gpu, warning });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to set fan curve for mode {ModeId}", modeId);
             return StatusCode(500, new { error = $"Failed to set fan curve for mode {modeId}" });
         }
+    }
+
+    private static byte[] BuildCurveData(FanCurveProfile profile)
+    {
+        var data = new byte[16];
+        Array.Copy(profile.Temperatures!, 0, data, 0, 8);
+        Array.Copy(profile.Speeds!, 0, data, 8, 8);
+        return data;
     }
 
     private static string? ValidateFanCurve(FanCurveProfile profile, string label)

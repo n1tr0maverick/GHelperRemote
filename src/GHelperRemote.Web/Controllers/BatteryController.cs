@@ -12,17 +12,17 @@ namespace GHelperRemote.Web.Controllers;
 [Route("api/battery")]
 public class BatteryController : ControllerBase
 {
+    private readonly AcpiSensorService _acpiService;
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<BatteryController> _logger;
 
     public BatteryController(
+        AcpiSensorService acpiService,
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<BatteryController> logger)
     {
+        _acpiService = acpiService;
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -50,26 +50,23 @@ public class BatteryController : ControllerBase
 
         try
         {
-            await _configService.WriteConfigAsync(new Dictionary<string, object>
+            // Apply directly to hardware via ACPI
+            if (!_acpiService.SetBatteryChargeLimit(request.ChargeLimit))
             {
-                ["charge_limit"] = request.ChargeLimit
-            });
+                return StatusCode(500, new { error = "Failed to set battery charge limit via ACPI. Check logs for details." });
+            }
 
+            // Persist to config
             try
             {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
+                await _configService.WriteConfigAsync(new Dictionary<string, object>
                 {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                    ["charge_limit"] = request.ChargeLimit
                 });
             }
-            catch (Exception restartEx)
+            catch (Exception configEx)
             {
-                _logger.LogWarning(restartEx, "Charge limit saved but G-Helper restart failed");
+                _logger.LogWarning(configEx, "Charge limit applied to hardware but config write failed");
             }
 
             var config = await _configService.ReadConfigAsync();

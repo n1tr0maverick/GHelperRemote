@@ -1,7 +1,6 @@
-using System.Text.Json;
-
 using Microsoft.AspNetCore.Mvc;
 
+using GHelperRemote.Core.Acpi;
 using GHelperRemote.Core.Models;
 using GHelperRemote.Core.Services;
 
@@ -13,17 +12,17 @@ public class GpuModeController : ControllerBase
 {
     private static readonly string[] ModeNames = { "Eco", "Standard", "Ultimate" };
 
+    private readonly AcpiSensorService _acpiService;
     private readonly GHelperConfigService _configService;
-    private readonly GHelperProcessService _processService;
     private readonly ILogger<GpuModeController> _logger;
 
     public GpuModeController(
+        AcpiSensorService acpiService,
         GHelperConfigService configService,
-        GHelperProcessService processService,
         ILogger<GpuModeController> logger)
     {
+        _acpiService = acpiService;
         _configService = configService;
-        _processService = processService;
         _logger = logger;
     }
 
@@ -32,16 +31,20 @@ public class GpuModeController : ControllerBase
     {
         try
         {
+            // Read actual hardware state via ACPI
+            var mode = _acpiService.GetGpuMode();
+
+            // Also read auto setting from config
             var config = await _configService.ReadConfigAsync();
-
-            var mode = config.TryGetValue("gpu_mode", out var mVal)
-                ? mVal.GetInt32()
-                : 0;
-
             var auto = config.TryGetValue("gpu_auto", out var aVal)
-                && aVal.ValueKind == JsonValueKind.True;
+                && aVal.ValueKind == System.Text.Json.JsonValueKind.True;
 
-            return Ok(new { mode, name = ModeNames.ElementAtOrDefault(mode) ?? "Unknown", auto });
+            return Ok(new
+            {
+                mode,
+                name = ModeNames.ElementAtOrDefault(mode) ?? "Unknown",
+                auto
+            });
         }
         catch (Exception ex)
         {
@@ -58,44 +61,49 @@ public class GpuModeController : ControllerBase
 
         try
         {
-            await _configService.WriteConfigAsync(new Dictionary<string, object>
-            {
-                ["gpu_mode"] = request.Mode,
-                ["gpu_auto"] = request.Auto
-            });
+            bool success;
+            string? warning = null;
 
-            string? restartWarning = null;
+            switch (request.Mode)
+            {
+                case AcpiConstants.GpuModeEco:
+                    // Enable Eco mode (turn off discrete GPU)
+                    success = _acpiService.SetGpuEco(1);
+                    break;
+
+                case AcpiConstants.GpuModeStandard:
+                    // Disable Eco mode (turn on discrete GPU)
+                    success = _acpiService.SetGpuEco(0);
+                    break;
+
+                case AcpiConstants.GpuModeUltimate:
+                    // Set MUX to direct GPU mode (requires reboot)
+                    success = _acpiService.SetGpuMux(0);
+                    warning = "Ultimate (MUX switch) mode requires a system reboot to take effect.";
+                    break;
+
+                default:
+                    return BadRequest(new { error = "Invalid GPU mode" });
+            }
+
+            if (!success)
+            {
+                return StatusCode(500, new { error = "Failed to set GPU mode via ACPI. Check logs for details." });
+            }
+
+            // Persist to config for GHelper UI sync
             try
             {
-                await _processService.RestartGHelperAsync();
-            }
-            catch (FileNotFoundException)
-            {
-                return StatusCode(500, new
+                await _configService.WriteConfigAsync(new Dictionary<string, object>
                 {
-                    code = "ghelper_exe_not_found",
-                    error = "G-Helper executable path is not configured. Set the full path to GHelper.exe in settings or use auto-detect."
+                    ["gpu_mode"] = request.Mode,
+                    ["gpu_auto"] = request.Auto
                 });
             }
-            catch (Exception restartEx)
+            catch (Exception configEx)
             {
-                _logger.LogWarning(restartEx, "Config was saved but G-Helper restart failed");
-                restartWarning = "Config saved, but G-Helper could not be restarted. " +
-                                 "Please restart G-Helper manually for changes to take effect.";
+                _logger.LogWarning(configEx, "GPU mode applied to hardware but config write failed");
             }
-
-            var muxWarning = request.Mode == 2
-                ? "Ultimate (MUX switch) mode requires a system reboot to take effect."
-                : (string?)null;
-
-            // Combine warnings if both exist
-            var warning = (restartWarning, muxWarning) switch
-            {
-                (not null, not null) => restartWarning + " " + muxWarning,
-                (not null, null) => restartWarning,
-                (null, not null) => muxWarning,
-                _ => null
-            };
 
             return Ok(new
             {
