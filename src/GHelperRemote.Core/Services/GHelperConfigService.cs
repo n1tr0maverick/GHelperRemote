@@ -176,6 +176,13 @@ public sealed class GHelperConfigService : IDisposable
 
     private async Task<Dictionary<string, JsonElement>> ReadConfigFromDiskAsync()
     {
+        if (!File.Exists(_configPath))
+        {
+            _logger.LogWarning("Config file not found at {Path}. Returning empty config. " +
+                "This is normal if G-Helper has not been run yet.", _configPath);
+            return new Dictionary<string, JsonElement>();
+        }
+
         for (int attempt = 1; attempt <= MaxRetries; attempt++)
         {
             try
